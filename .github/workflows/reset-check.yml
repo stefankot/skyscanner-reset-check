@@ -1,0 +1,90 @@
+name: One-shot remote Skyscanner reset check
+on:
+  push:
+    paths:
+      - '.github/workflows/reset-check.yml'
+  schedule:
+    - cron: '7 15 28 10 *'
+permissions:
+  contents: write
+concurrency:
+  group: one-shot-skyscanner-reset
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      TEST_MODE: ${{ github.event_name == 'schedule' && 'real' || 'dry-run' }}
+    steps:
+      - name: Validate or run exactly one public MCP search
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import base64,datetime,json,os,urllib.request,urllib.error
+          
+          ENDPOINT='https://mcp-skyscanner.onrender.com/mcp'
+          ARGS={'origin_airport_code':'WAW','destination_airport_code':'LHR','depart_date':'2026-11-26','return_date':'2026-11-30','adults':1,'cabin_class':'economy'}
+          
+          def parse_mcp(text):
+              messages=[json.loads(line[6:]) for line in text.splitlines() if line.startswith('data: ')]
+              payload=messages[-1] if messages else json.loads(text)
+              result=payload.get('result',{})
+              if result.get('isError') or 'error' in payload:
+                  return {'status':'MCP_ERROR','error':' '.join(x.get('text','') for x in result.get('content',[])) or str(payload.get('error'))}
+              content=result.get('structuredContent') or json.loads(next(x['text'] for x in result['content'] if x['type']=='text'))
+              content=content.get('result',content)
+              items=[i for b in content['buckets'] for i in b['items']]
+              assert content['source']=='skyscanner_via_firecrawl_keyless'
+              assert content['origin']=='WAW' and content['destination']=='LHR'
+              assert content['depart_date']=='2026-11-26' and content['return_date']=='2026-11-30'
+              assert items and all(i['price']['currency']=='PLN' and i['price']['amount']>0 and len(i['legs'])==2 for i in items)
+              return {'status':'VERIFIED','offers':len(items),'currency':'PLN','min_price_pln':min(i['price']['amount'] for i in items),'sample':items[:2],'fetched_at':content['fetched_at'],'partial':content['partial'],'meaning':'Access works again; exact reset time was not measured.'}
+          
+          def github(method,path,body=None):
+              request=urllib.request.Request('https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/contents/'+path,data=json.dumps(body).encode() if body is not None else None,method=method,headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
+          
+          def publish(result,sha=None):
+              encoded=base64.b64encode(json.dumps(result,ensure_ascii=False,indent=2).encode()).decode()
+              body={'message':'Record one-shot Skyscanner reset test [skip ci]','content':encoded}
+              if sha:body['sha']=sha
+              return github('PUT','reset-result.json',body)['content']['sha']
+          
+          def main():
+              if os.environ.get('TEST_MODE','dry-run')!='real':
+                  try:parse_mcp(': ping\n\nevent: message\ndata: '+json.dumps({'result':{'isError':True,'content':[{'type':'text','text':'fixture 429'}]}}))
+                  except Exception:raise AssertionError('SSE parser self-test failed')
+                  print('DRY_RUN_PASS: Python and SSE parser verified; no MCP or Firecrawl request sent.')
+                  return
+              now=datetime.datetime.now(datetime.timezone.utc)
+              if now<datetime.datetime(2026,10,28,15,0,tzinfo=datetime.timezone.utc):
+                  print('SKIPPED_BEFORE_ALLOWED_TIME');return
+              try:
+                  github('GET','reset-result.json')
+              except urllib.error.HTTPError as error:
+                  if error.code!=404:raise
+              else:
+                  print('SKIPPED_ALREADY_ATTEMPTED: remote result/claim exists; no MCP request sent.');return
+              result={'status':'STARTED','attempted_at':now.isoformat(),'arguments':ARGS,'endpoint':ENDPOINT,'firecrawl_api_key_used':False,'retry_count':0,'run_url':'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID']}
+              # Persist claim BEFORE sending: reruns and later schedules cannot duplicate the test.
+              sha=publish(result)
+              request=urllib.request.Request(ENDPOINT,data=json.dumps({'jsonrpc':'2.0','id':20261028,'method':'tools/call','params':{'name':'search_flights','arguments':ARGS}}).encode(),headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'})
+              try:
+                  with urllib.request.urlopen(request,timeout=180) as response:
+                      result['http_status']=response.status
+                      text=response.read().decode()
+                  result.update(parse_mcp(text))
+              except urllib.error.HTTPError as error:
+                  result.update(status='HTTP_ERROR',http_status=error.code,error=str(error))
+              except Exception as error:
+                  result.update(status='TEST_ERROR',error=type(error).__name__+': '+str(error))
+              result['completed_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+              publish(result,sha)
+              output=json.dumps(result,ensure_ascii=False,indent=2)
+              print(output)
+              with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:summary.write('# Skyscanner: rzeczywisty wynik testu po resecie\n\n```json\n'+output+'\n```\n')
+          
+          if __name__=='__main__':main()
+          PYTHON
