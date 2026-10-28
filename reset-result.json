@@ -1,5 +1,5 @@
 {
-  "status": "STARTED",
+  "status": "MCP_ERROR",
   "attempted_at": "2026-10-28T20:10:13.413710+00:00",
   "arguments": {
     "origin_airport_code": "WAW",
@@ -12,5 +12,8 @@
   "endpoint": "https://mcp-skyscanner.onrender.com/mcp",
   "firecrawl_api_key_used": false,
   "retry_count": 0,
-  "run_url": "https://github.com/stefankot/skyscanner-reset-check/actions/runs/40760831625"
+  "run_url": "https://github.com/stefankot/skyscanner-reset-check/actions/runs/40760831625",
+  "http_status": 200,
+  "error": "{\"error\": \"BannedWithCaptcha\", \"message\": \"Firecrawl returned a Skyscanner challenge\"}",
+  "completed_at": "2026-10-28T20:11:39.339511+00:00"
 }
