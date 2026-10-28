@@ -1,0 +1,16 @@
+{
+  "status": "STARTED",
+  "attempted_at": "2026-10-28T20:10:13.413710+00:00",
+  "arguments": {
+    "origin_airport_code": "WAW",
+    "destination_airport_code": "LHR",
+    "depart_date": "2026-11-26",
+    "return_date": "2026-11-30",
+    "adults": 1,
+    "cabin_class": "economy"
+  },
+  "endpoint": "https://mcp-skyscanner.onrender.com/mcp",
+  "firecrawl_api_key_used": false,
+  "retry_count": 0,
+  "run_url": "https://github.com/stefankot/skyscanner-reset-check/actions/runs/40760831625"
+}
